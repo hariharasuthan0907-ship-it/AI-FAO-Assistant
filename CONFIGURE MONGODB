@@ -1,0 +1,1257 @@
+MongoDB Configuration and Development
+1. Overview
+MongoDB will be used as the primary application database for AI-FAO-Assistant.
+
+MongoDB can store:
+
+Farmer profiles
+
+Farm information
+
+Crop information
+
+Conversations
+
+Chat messages
+
+Crop observations
+
+Disease observations
+
+Weather records
+
+Market records
+
+AI interaction logs
+
+The architecture becomes:
+
+                    AI-FAO-Assistant
+                           |
+                     FastAPI Backend
+                           |
+                 +---------+---------+
+                 |                   |
+             AI Layer            MongoDB
+                 |                   |
+          +------+-------+     +-----+------+
+          |      |       |     |            |
+         LLM    RAG    Tools Farmers       Crops
+          |      |             |            |
+          |   Vector DB        Farms    Conversations
+          |                    |
+          +--------------------+
+
+MongoDB is the application database. A vector database or MongoDB's vector-search capabilities can be added separately for the RAG layer.
+
+2. MongoDB Architecture
+Recommended database:
+
+MongoDB
+  |
+  └── aifao
+       |
+       ├── farmers
+       ├── farms
+       ├── crops
+       ├── conversations
+       ├── messages
+       ├── observations
+       ├── diseases
+       ├── weather
+       ├── market_prices
+       ├── documents
+       └── ai_logs
+
+MongoDB stores JSON-like BSON documents.
+
+For example, a farmer document can look like:
+
+{
+  "_id": "ObjectId(...)",
+  "name": "Farmer Name",
+  "phone": "+91XXXXXXXXXX",
+  "language": "ta",
+  "location": {
+    "type": "Point",
+    "coordinates": [80.2707, 13.0827]
+  },
+  "created_at": "2026-09-30T00:00:00Z"
+}
+
+3. Install MongoDB
+There are two common approaches.
+
+Option A — Local MongoDB
+Install MongoDB Community Edition on the development computer.
+
+After installation, make sure MongoDB is running.
+
+Test:
+
+mongosh
+
+Then:
+
+show dbs
+
+4. Docker MongoDB
+For development, Docker is convenient.
+
+Create:
+
+docker-compose.yml
+
+services:
+
+  mongodb:
+    image: mongo:8
+    container_name: aifao-mongodb
+
+    restart: unless-stopped
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: change_this_password
+
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - mongodb_data:/data/db
+
+volumes:
+  mongodb_data:
+
+Start MongoDB:
+
+docker compose up -d
+
+Check:
+
+docker ps
+
+You should see:
+
+aifao-mongodb
+
+5. MongoDB Connection URL
+For Docker:
+
+MONGODB_URL=mongodb://admin:change_this_password@localhost:27017
+MONGODB_DATABASE=aifao
+
+For a MongoDB server without authentication:
+
+MONGODB_URL=mongodb://localhost:27017
+MONGODB_DATABASE=aifao
+
+For MongoDB Atlas:
+
+MONGODB_URL=mongodb+srv://USERNAME:PASSWORD@CLUSTER.mongodb.net/
+MONGODB_DATABASE=aifao
+
+Do not commit passwords or connection strings containing credentials to Git.
+
+6. Python Dependencies
+Install:
+
+pip install fastapi
+pip install uvicorn
+pip install pymongo
+pip install pydantic
+pip install pydantic-settings
+pip install python-dotenv
+pip install openai
+
+Or put them into requirements.txt:
+
+fastapi
+uvicorn[standard]
+pymongo
+pydantic
+pydantic-settings
+python-dotenv
+openai
+httpx
+python-multipart
+
+Then:
+
+pip install -r requirements.txt
+
+7. Environment Configuration
+Create:
+
+.env
+
+APP_NAME=AI-FAO-Assistant
+
+MONGODB_URL=mongodb://admin:change_this_password@localhost:27017
+
+MONGODB_DATABASE=aifao
+
+OPENAI_API_KEY=YOUR_API_KEY
+
+OPENAI_MODEL=gpt-4o-mini
+
+Create .env.example:
+
+APP_NAME=AI-FAO-Assistant
+
+MONGODB_URL=mongodb://USERNAME:PASSWORD@localhost:27017
+
+MONGODB_DATABASE=aifao
+
+OPENAI_API_KEY=YOUR_API_KEY
+
+OPENAI_MODEL=gpt-4o-mini
+
+8. Configuration Code
+Create:
+
+app/core/config.py
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+
+    app_name: str = "AI-FAO-Assistant"
+
+    mongodb_url: str
+
+    mongodb_database: str = "aifao"
+
+    openai_api_key: str
+
+    openai_model: str = "gpt-4o-mini"
+
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
+
+
+settings = Settings()
+
+9. MongoDB Connection
+Create:
+
+app/db/mongodb.py
+
+from pymongo import MongoClient
+
+from app.core.config import settings
+
+
+client = MongoClient(
+    settings.mongodb_url,
+    serverSelectionTimeoutMS=5000
+)
+
+database = client[
+    settings.mongodb_database
+]
+
+
+def get_database():
+    return database
+
+
+def check_database_connection():
+
+    try:
+        client.admin.command("ping")
+        return True
+
+    except Exception:
+        return False
+
+10. Database Collections
+Create:
+
+app/db/collections.py
+
+from app.db.mongodb import get_database
+
+
+db = get_database()
+
+
+farmers_collection = db["farmers"]
+
+farms_collection = db["farms"]
+
+crops_collection = db["crops"]
+
+conversations_collection = db["conversations"]
+
+messages_collection = db["messages"]
+
+observations_collection = db["observations"]
+
+diseases_collection = db["diseases"]
+
+weather_collection = db["weather"]
+
+market_prices_collection = db["market_prices"]
+
+documents_collection = db["documents"]
+
+ai_logs_collection = db["ai_logs"]
+
+11. Farmer Service
+Create:
+
+app/services/farmer_service.py
+
+from datetime import datetime, timezone
+
+from app.db.collections import farmers_collection
+
+
+def create_farmer(
+    name: str,
+    phone: str | None = None,
+    language: str = "en"
+):
+
+    farmer = {
+        "name": name,
+        "phone": phone,
+        "language": language,
+        "created_at": datetime.now(timezone.utc)
+    }
+
+    result = farmers_collection.insert_one(
+        farmer
+    )
+
+    farmer["_id"] = str(
+        result.inserted_id
+    )
+
+    return farmer
+
+
+def get_farmer(
+    farmer_id
+):
+
+    from bson import ObjectId
+
+    farmer = farmers_collection.find_one(
+        {
+            "_id": ObjectId(farmer_id)
+        }
+    )
+
+    if farmer:
+
+        farmer["_id"] = str(
+            farmer["_id"]
+        )
+
+    return farmer
+
+12. Farmer API
+Create:
+
+app/api/routes/farmers.py
+
+from fastapi import APIRouter, HTTPException
+
+from pydantic import BaseModel
+
+from app.services.farmer_service import (
+    create_farmer,
+    get_farmer
+)
+
+
+router = APIRouter(
+    prefix="/farmers",
+    tags=["Farmers"]
+)
+
+
+class FarmerRequest(BaseModel):
+
+    name: str
+
+    phone: str | None = None
+
+    language: str = "en"
+
+
+@router.post("")
+def add_farmer(
+    request: FarmerRequest
+):
+
+    return create_farmer(
+        name=request.name,
+        phone=request.phone,
+        language=request.language
+    )
+
+
+@router.get("/{farmer_id}")
+def farmer(
+    farmer_id: str
+):
+
+    result = get_farmer(
+        farmer_id
+    )
+
+    if not result:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Farmer not found"
+        )
+
+    return result
+
+13. Register Farmer API
+In:
+
+app/main.py
+
+use:
+
+from fastapi import FastAPI
+
+from app.api.routes import farmers
+from app.db.mongodb import check_database_connection
+
+
+app = FastAPI(
+    title="AI-FAO-Assistant",
+    version="1.0.0"
+)
+
+
+app.include_router(
+    farmers.router,
+    prefix="/api/v1"
+)
+
+
+@app.get("/")
+def root():
+
+    return {
+        "application": "AI-FAO-Assistant",
+        "status": "running"
+    }
+
+
+@app.get("/health")
+def health():
+
+    mongodb = check_database_connection()
+
+    return {
+        "status": "healthy",
+        "mongodb": mongodb
+    }
+
+14. MongoDB Chat Storage
+A conversation can be stored like:
+
+{
+  "_id": "ObjectId(...)",
+  "farmer_id": "ObjectId(...)",
+  "language": "en",
+  "created_at": "2026-09-30T00:00:00Z"
+}
+
+Messages can be stored separately:
+
+{
+  "_id": "ObjectId(...)",
+  "conversation_id": "ObjectId(...)",
+  "role": "user",
+  "content": "How do I manage my rice crop?",
+  "created_at": "2026-09-30T00:00:00Z"
+}
+
+Assistant message:
+
+{
+  "_id": "ObjectId(...)",
+  "conversation_id": "ObjectId(...)",
+  "role": "assistant",
+  "content": "Rice management depends on...",
+  "sources": [],
+  "created_at": "2026-09-30T00:00:00Z"
+}
+
+15. Conversation Service
+Create:
+
+app/services/conversation_service.py
+
+from datetime import datetime, timezone
+
+from bson import ObjectId
+
+from app.db.collections import (
+    conversations_collection,
+    messages_collection
+)
+
+
+def create_conversation(
+    farmer_id: str,
+    language: str = "en"
+):
+
+    conversation = {
+
+        "farmer_id": ObjectId(
+            farmer_id
+        ),
+
+        "language": language,
+
+        "created_at":
+            datetime.now(timezone.utc)
+    }
+
+    result = conversations_collection.insert_one(
+        conversation
+    )
+
+    return str(
+        result.inserted_id
+    )
+
+
+def save_message(
+    conversation_id: str,
+    role: str,
+    content: str,
+    sources: list[str] | None = None
+):
+
+    message = {
+
+        "conversation_id":
+            ObjectId(conversation_id),
+
+        "role": role,
+
+        "content": content,
+
+        "sources": sources or [],
+
+        "created_at":
+            datetime.now(timezone.utc)
+    }
+
+    result = messages_collection.insert_one(
+        message
+    )
+
+    return str(
+        result.inserted_id
+    )
+
+16. Chat API with MongoDB
+Create:
+
+app/api/routes/chat.py
+
+from fastapi import APIRouter
+
+from pydantic import BaseModel
+
+from app.ai.orchestrator import process_question
+
+from app.services.conversation_service import (
+    create_conversation,
+    save_message
+)
+
+
+router = APIRouter(
+    prefix="/chat",
+    tags=["AI Chat"]
+)
+
+
+class ChatRequest(BaseModel):
+
+    farmer_id: str
+
+    question: str
+
+    language: str = "en"
+
+
+@router.post("")
+def chat(
+    request: ChatRequest
+):
+
+    conversation_id = create_conversation(
+        farmer_id=request.farmer_id,
+        language=request.language
+    )
+
+    save_message(
+        conversation_id=conversation_id,
+        role="user",
+        content=request.question
+    )
+
+    result = process_question(
+        question=request.question,
+        language=request.language
+    )
+
+    save_message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=result["answer"],
+        sources=result.get("sources", [])
+    )
+
+    return {
+
+        "conversation_id":
+            conversation_id,
+
+        "answer":
+            result["answer"],
+
+        "sources":
+            result.get("sources", [])
+    }
+
+17. Main Application
+Update:
+
+app/main.py
+
+from fastapi import FastAPI
+
+from app.api.routes import (
+    chat,
+    farmers
+)
+
+from app.db.mongodb import (
+    check_database_connection
+)
+
+
+app = FastAPI(
+
+    title="AI-FAO-Assistant",
+
+    description=
+        "AI-powered agricultural assistant",
+
+    version="1.0.0"
+)
+
+
+app.include_router(
+    chat.router,
+    prefix="/api/v1"
+)
+
+app.include_router(
+    farmers.router,
+    prefix="/api/v1"
+)
+
+
+@app.get("/")
+def root():
+
+    return {
+        "application":
+            "AI-FAO-Assistant",
+
+        "status":
+            "running"
+    }
+
+
+@app.get("/health")
+def health():
+
+    return {
+
+        "status":
+            "healthy",
+
+        "mongodb":
+            check_database_connection()
+    }
+
+18. MongoDB Indexes
+Indexes are important for performance.
+
+Create:
+
+app/db/indexes.py
+
+from app.db.collections import (
+    farmers_collection,
+    crops_collection,
+    conversations_collection,
+    messages_collection
+)
+
+
+def create_indexes():
+
+    farmers_collection.create_index(
+        "phone",
+        unique=True,
+        sparse=True
+    )
+
+    crops_collection.create_index(
+        "farmer_id"
+    )
+
+    conversations_collection.create_index(
+        "farmer_id"
+    )
+
+    messages_collection.create_index(
+        "conversation_id"
+    )
+
+Call this during application startup:
+
+from app.db.indexes import create_indexes
+
+
+@app.on_event("startup")
+def startup():
+
+    create_indexes()
+
+For newer FastAPI applications, lifespan events are preferable to the older startup/shutdown decorator.
+
+19. MongoDB Data Model
+Recommended structure:
+
+farmers
+--------
+_id
+name
+phone
+language
+location
+created_at
+
+
+farms
+-----
+_id
+farmer_id
+name
+area
+soil_type
+location
+created_at
+
+
+crops
+-----
+_id
+farmer_id
+farm_id
+name
+variety
+planting_date
+harvest_date
+status
+created_at
+
+
+observations
+------------
+_id
+farmer_id
+farm_id
+crop_id
+type
+description
+image_url
+created_at
+
+
+conversations
+-------------
+_id
+farmer_id
+language
+created_at
+
+
+messages
+--------
+_id
+conversation_id
+role
+content
+sources
+created_at
+
+20. Crop Document Example
+{
+  "_id": "ObjectId(...)",
+  "farmer_id": "ObjectId(...)",
+  "farm_id": "ObjectId(...)",
+
+  "name": "Rice",
+
+  "variety": "Example Variety",
+
+  "planting_date": "2026-07-15",
+
+  "status": "growing",
+
+  "created_at": "2026-09-30T00:00:00Z"
+}
+
+21. Farm Location
+MongoDB supports GeoJSON-style location data.
+
+Example:
+
+{
+  "location": {
+    "type": "Point",
+    "coordinates": [
+      80.2707,
+      13.0827
+    ]
+  }
+}
+
+Important:
+
+coordinates[0] = longitude
+coordinates[1] = latitude
+
+Create a geospatial index:
+
+farms_collection.create_index(
+    [
+        ("location", "2dsphere")
+    ]
+)
+
+This allows future features such as:
+
+Farmer
+   |
+   v
+Farm coordinates
+   |
+   v
+Nearby weather
+   |
+   v
+Nearby markets
+   |
+   v
+Regional agricultural information
+
+22. MongoDB and RAG
+MongoDB stores application information.
+
+For example:
+
+MongoDB
+   |
+   +-- Farmer
+   +-- Farm
+   +-- Crop
+   +-- Conversations
+   +-- Messages
+
+The RAG system stores knowledge:
+
+Agricultural Documents
+        |
+        v
+Document Processing
+        |
+        v
+Chunks
+        |
+        v
+Embeddings
+        |
+        v
+Vector Search
+        |
+        v
+Relevant Knowledge
+
+The assistant can then combine:
+
+Farmer Data
++
+Crop Data
++
+Current Weather
++
+Retrieved Agricultural Knowledge
++
+Question
++
+Conversation History
+        |
+        v
+       LLM
+        |
+        v
+     Answer
+
+23. MongoDB Vector Search
+If the chosen MongoDB deployment supports the required vector-search functionality, agricultural document embeddings can also be stored in MongoDB.
+
+Example document:
+
+{
+  "_id": "ObjectId(...)",
+
+  "title": "Rice Water Management",
+
+  "source": "Agricultural Knowledge Base",
+
+  "content": "Rice water management...",
+
+  "language": "en",
+
+  "crop": "rice",
+
+  "embedding": [
+    0.012,
+    -0.038,
+    0.104
+  ],
+
+  "created_at":
+    "2026-09-30T00:00:00Z"
+}
+
+The exact vector index definition depends on the MongoDB deployment/version being used.
+
+24. MongoDB Document Ingestion
+Create:
+
+app/services/document_service.py
+
+from datetime import datetime, timezone
+
+from app.db.collections import (
+    documents_collection
+)
+
+
+def save_document(
+    title: str,
+    content: str,
+    source: str,
+    language: str = "en"
+):
+
+    document = {
+
+        "title": title,
+
+        "content": content,
+
+        "source": source,
+
+        "language": language,
+
+        "created_at":
+            datetime.now(timezone.utc)
+    }
+
+    result = documents_collection.insert_one(
+        document
+    )
+
+    return str(
+        result.inserted_id
+    )
+
+25. Development Folder Structure
+After MongoDB integration:
+
+AI-FAO-Assistant/
+│
+├── backend/
+│   │
+│   ├── app/
+│   │   ├── main.py
+│   │   │
+│   │   ├── api/
+│   │   │   └── routes/
+│   │   │       ├── chat.py
+│   │   │       ├── farmers.py
+│   │   │       ├── crops.py
+│   │   │       └── health.py
+│   │   │
+│   │   ├── ai/
+│   │   │   ├── llm.py
+│   │   │   ├── rag.py
+│   │   │   └── orchestrator.py
+│   │   │
+│   │   ├── core/
+│   │   │   └── config.py
+│   │   │
+│   │   ├── db/
+│   │   │   ├── mongodb.py
+│   │   │   ├── collections.py
+│   │   │   └── indexes.py
+│   │   │
+│   │   └── services/
+│   │       ├── farmer_service.py
+│   │       ├── conversation_service.py
+│   │       └── document_service.py
+│   │
+│   ├── data/
+│   │   └── documents/
+│   │
+│   ├── tests/
+│   │
+│   ├── .env
+│   ├── .env.example
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── frontend/
+│
+├── README.md
+├── DEVELOPMENT.md
+├── MONGODB_SETUP.md
+└── .gitignore
+
+26. Start the Application
+Start MongoDB:
+
+docker compose up -d mongodb
+
+Start FastAPI:
+
+uvicorn app.main:app --reload
+
+Open:
+
+http://localhost:8000
+
+API documentation:
+
+http://localhost:8000/docs
+
+27. Test MongoDB
+Open:
+
+http://localhost:8000/health
+
+Expected:
+
+{
+  "status": "healthy",
+  "mongodb": true
+}
+
+If MongoDB is unavailable:
+
+{
+  "status": "healthy",
+  "mongodb": false
+}
+
+The application should eventually return an appropriate degraded/unavailable status rather than reporting the service as fully healthy.
+
+28. Create a Farmer
+Using Swagger or curl:
+
+curl -X POST \
+  http://localhost:8000/api/v1/farmers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Test Farmer",
+    "phone": "+910000000000",
+    "language": "en"
+  }'
+
+Example response:
+
+{
+  "_id": "68db00000000000000000000",
+  "name": "Test Farmer",
+  "phone": "+910000000000",
+  "language": "en",
+  "created_at": "2026-09-30T00:00:00Z"
+}
+
+29. Chat Test
+After creating a farmer, use the returned ID:
+
+curl -X POST \
+  http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "farmer_id": "68db00000000000000000000",
+    "question": "How should I manage my rice crop?",
+    "language": "en"
+  }'
+
+The system performs:
+
+HTTP Request
+     |
+     v
+FastAPI
+     |
+     v
+Create Conversation
+     |
+     v
+Save User Message
+     |
+     v
+AI Orchestrator
+     |
+     +---- RAG
+     |
+     +---- LLM
+     |
+     v
+Generate Answer
+     |
+     v
+Save Assistant Message
+     |
+     v
+JSON Response
+
+30. MongoDB Shell
+Connect:
+
+mongosh \
+  "mongodb://admin:change_this_password@localhost:27017"
+
+Select database:
+
+use aifao
+
+List collections:
+
+show collections
+
+View farmers:
+
+db.farmers.find().pretty()
+
+View conversations:
+
+db.conversations.find().pretty()
+
+View messages:
+
+db.messages.find().pretty()
+
+31. Production Recommendations
+Before production deployment:
+
+[ ] Use MongoDB authentication
+[ ] Use TLS
+[ ] Store secrets securely
+[ ] Enable backups
+[ ] Configure database indexes
+[ ] Validate ObjectId inputs
+[ ] Add authentication
+[ ] Add authorization
+[ ] Add rate limiting
+[ ] Add request logging
+[ ] Add error monitoring
+[ ] Add database monitoring
+[ ] Protect personal information
+[ ] Define data retention rules
+[ ] Test disaster recovery
+
+Do not use the default development credentials in production.
+
+32. Final MongoDB Architecture
+                         USER
+                           |
+                           v
+                    Mobile / Web
+                           |
+                           v
+                      FastAPI
+                           |
+                  +--------+--------+
+                  |                 |
+                  v                 v
+             AI Orchestrator     MongoDB
+                  |                 |
+       +----------+---------+       |
+       |          |         |       |
+       v          v         v       |
+      LLM        RAG      Tools     |
+       |          |         |       |
+       |          |      Weather    |
+       |          |      Market     |
+       |          |      GIS        |
+       |          |                 |
+       |          v                 |
+       |      Knowledge             |
+       |      Documents             |
+       |                            |
+       +----------------------------+
+                    |
+                    v
+               Final Answer
+                    |
+                    v
+                 MongoDB
+              Conversation
+                 History
+
+33. MongoDB's Role in AI-FAO-Assistant
+MongoDB should primarily manage the application's operational data:
+
+Farmer
+Farm
+Crop
+Observation
+Conversation
+Message
+Weather Record
+Market Record
+AI Log
+Document Metadata
+
+The AI layer remains separate:
+
+MongoDB
+   +
+RAG / Vector Search
+   +
+LLM
+   +
+External Agricultural APIs
+   =
+AI-FAO-Assistant
