@@ -1,0 +1,798 @@
+ Backend folder structure
+AI-FAO-Assistant/
+│
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   │
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   └── routes/
+│   │   │       ├── __init__.py
+│   │   │       ├── chat.py
+│   │   │       ├── farmers.py
+│   │   │       ├── crops.py
+│   │   │       └── health.py
+│   │   │
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   └── config.py
+│   │   │
+│   │   ├── db/
+│   │   │   ├── __init__.py
+│   │   │   ├── database.py
+│   │   │   └── models.py
+│   │   │
+│   │   ├── schemas/
+│   │   │   ├── __init__.py
+│   │   │   └── chat.py
+│   │   │
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── ai_service.py
+│   │   │   ├── rag_service.py
+│   │   │   └── farmer_service.py
+│   │   │
+│   │   └── utils/
+│   │       └── __init__.py
+│   │
+│   ├── data/
+│   │   └── documents/
+│   │
+│   ├── tests/
+│   │   └── test_health.py
+│   │
+│   ├── .env
+│   ├── .env.example
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── README.md
+└── .gitignore
+
+2. requirements.txt
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic
+pydantic-settings
+python-dotenv
+openai
+pgvector
+python-multipart
+httpx
+
+3. .env.example
+APP_NAME=AI-FAO-Assistant
+DEBUG=true
+
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/aifao
+
+OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+
+FAO_KNOWLEDGE_PATH=./data/documents
+
+Copy it to:
+
+.env
+
+and add your actual API key.
+
+4. app/core/config.py
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    app_name: str = "AI-FAO-Assistant"
+    debug: bool = True
+
+    database_url: str
+
+    openai_api_key: str
+    openai_model: str = "gpt-4o-mini"
+
+    fao_knowledge_path: str = "./data/documents"
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()
+
+5. app/db/database.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+from app.core.config import settings
+
+
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+
+    try:
+        yield db
+    finally:
+        db.close()
+
+6. app/db/models.py
+from datetime import datetime
+
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+)
+
+from app.db.database import Base
+
+
+class Farmer(Base):
+    __tablename__ = "farmers"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    name = Column(String(150), nullable=False)
+    phone = Column(String(30), unique=True, nullable=True)
+    language = Column(String(20), default="en")
+
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+
+class Crop(Base):
+    __tablename__ = "crops"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    farmer_id = Column(
+        Integer,
+        ForeignKey("farmers.id"),
+        nullable=False,
+    )
+
+    name = Column(String(100), nullable=False)
+    variety = Column(String(100), nullable=True)
+
+    planting_date = Column(String(50), nullable=True)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    farmer_id = Column(
+        Integer,
+        ForeignKey("farmers.id"),
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    conversation_id = Column(
+        Integer,
+        ForeignKey("conversations.id"),
+        nullable=False,
+    )
+
+    role = Column(String(30), nullable=False)
+    content = Column(Text, nullable=False)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
+
+7. app/schemas/chat.py
+from pydantic import BaseModel
+
+
+class ChatRequest(BaseModel):
+    farmer_id: int
+    message: str
+    language: str = "en"
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    conversation_id: int
+    sources: list[str] = []
+
+8. AI service
+app/services/ai_service.py
+
+from openai import OpenAI
+
+from app.core.config import settings
+
+
+client = OpenAI(
+    api_key=settings.openai_api_key
+)
+
+
+SYSTEM_PROMPT = """
+You are AI-FAO-Assistant.
+
+You are an agricultural information assistant.
+
+Your responsibilities:
+- Answer agriculture-related questions.
+- Explain crop management clearly.
+- Help farmers understand pests and diseases.
+- Provide irrigation and soil-management guidance.
+- Use retrieved agricultural knowledge when available.
+- Clearly distinguish known information from uncertainty.
+- Do not invent agricultural facts.
+- Encourage users to consult qualified agricultural experts
+  for serious crop disease, pesticide, livestock, or food-safety
+  decisions.
+
+Answer in the user's requested language.
+"""
+
+
+def generate_answer(
+    question: str,
+    context: str = "",
+    language: str = "en",
+) -> str:
+
+    prompt = f"""
+Language: {language}
+
+Agricultural knowledge:
+
+{context}
+
+Farmer question:
+
+{question}
+"""
+
+    response = client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+    )
+
+    return response.choices[0].message.content
+
+9. RAG service
+app/services/rag_service.py
+
+Start with a simple local knowledge implementation:
+
+from pathlib import Path
+
+from app.core.config import settings
+
+
+def load_documents() -> list[str]:
+    documents = []
+
+    path = Path(settings.fao_knowledge_path)
+
+    if not path.exists():
+        return documents
+
+    for file in path.glob("*.txt"):
+        try:
+            documents.append(
+                file.read_text(
+                    encoding="utf-8"
+                )
+            )
+        except Exception:
+            continue
+
+    return documents
+
+
+def retrieve_context(
+    question: str,
+    max_documents: int = 3,
+) -> str:
+
+    documents = load_documents()
+
+    if not documents:
+        return ""
+
+    # Basic MVP retrieval.
+    # Replace with embeddings + pgvector for production.
+
+    question_words = set(
+        question.lower().split()
+    )
+
+    scored = []
+
+    for document in documents:
+
+        words = set(
+            document.lower().split()
+        )
+
+        score = len(
+            question_words.intersection(words)
+        )
+
+        scored.append(
+            (score, document)
+        )
+
+    scored.sort(
+        key=lambda x: x[0],
+        reverse=True,
+    )
+
+    selected = [
+        document
+        for score, document in scored[:max_documents]
+        if score > 0
+    ]
+
+    return "\n\n".join(selected)
+
+10. Chat API
+app/api/routes/chat.py
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.db.models import (
+    Conversation,
+    Message,
+)
+from app.schemas.chat import (
+    ChatRequest,
+    ChatResponse,
+)
+from app.services.ai_service import generate_answer
+from app.services.rag_service import retrieve_context
+
+
+router = APIRouter(
+    prefix="/chat",
+    tags=["AI Chat"],
+)
+
+
+@router.post(
+    "",
+    response_model=ChatResponse,
+)
+def chat(
+    request: ChatRequest,
+    db: Session = Depends(get_db),
+):
+
+    conversation = Conversation(
+        farmer_id=request.farmer_id
+    )
+
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+
+    user_message = Message(
+        conversation_id=conversation.id,
+        role="user",
+        content=request.message,
+    )
+
+    db.add(user_message)
+    db.commit()
+
+    context = retrieve_context(
+        request.message
+    )
+
+    answer = generate_answer(
+        question=request.message,
+        context=context,
+        language=request.language,
+    )
+
+    assistant_message = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=answer,
+    )
+
+    db.add(assistant_message)
+    db.commit()
+
+    return ChatResponse(
+        answer=answer,
+        conversation_id=conversation.id,
+        sources=[],
+    )
+
+11. Farmer API
+app/api/routes/farmers.py
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.db.models import Farmer
+
+
+router = APIRouter(
+    prefix="/farmers",
+    tags=["Farmers"],
+)
+
+
+@router.post("")
+def create_farmer(
+    name: str,
+    phone: str | None = None,
+    language: str = "en",
+    db: Session = Depends(get_db),
+):
+
+    farmer = Farmer(
+        name=name,
+        phone=phone,
+        language=language,
+    )
+
+    db.add(farmer)
+    db.commit()
+    db.refresh(farmer)
+
+    return farmer
+
+
+@router.get("/{farmer_id}")
+def get_farmer(
+    farmer_id: int,
+    db: Session = Depends(get_db),
+):
+
+    farmer = (
+        db.query(Farmer)
+        .filter(Farmer.id == farmer_id)
+        .first()
+    )
+
+    if not farmer:
+        return {
+            "error": "Farmer not found"
+        }
+
+    return farmer
+
+12. Crop API
+app/api/routes/crops.py
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.db.database import get_db
+from app.db.models import Crop
+
+
+router = APIRouter(
+    prefix="/crops",
+    tags=["Crops"],
+)
+
+
+@router.post("")
+def create_crop(
+    farmer_id: int,
+    name: str,
+    variety: str | None = None,
+    planting_date: str | None = None,
+    db: Session = Depends(get_db),
+):
+
+    crop = Crop(
+        farmer_id=farmer_id,
+        name=name,
+        variety=variety,
+        planting_date=planting_date,
+    )
+
+    db.add(crop)
+    db.commit()
+    db.refresh(crop)
+
+    return crop
+
+
+@router.get("/farmer/{farmer_id}")
+def get_farmer_crops(
+    farmer_id: int,
+    db: Session = Depends(get_db),
+):
+
+    crops = (
+        db.query(Crop)
+        .filter(Crop.farmer_id == farmer_id)
+        .all()
+    )
+
+    return crops
+
+13. Health API
+app/api/routes/health.py
+
+from fastapi import APIRouter
+
+
+router = APIRouter(
+    prefix="/health",
+    tags=["Health"],
+)
+
+
+@router.get("")
+def health_check():
+
+    return {
+        "status": "healthy",
+        "service": "AI-FAO-Assistant",
+    }
+
+14. Main application
+app/main.py
+
+from fastapi import FastAPI
+
+from app.core.config import settings
+from app.db.database import Base, engine
+
+from app.api.routes import (
+    chat,
+    crops,
+    farmers,
+    health,
+)
+
+
+Base.metadata.create_all(
+    bind=engine
+)
+
+
+app = FastAPI(
+    title=settings.app_name,
+    version="1.0.0",
+    description="AI assistant for agricultural and FAO-related knowledge.",
+)
+
+
+app.include_router(
+    health.router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    chat.router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    farmers.router,
+    prefix="/api/v1",
+)
+
+app.include_router(
+    crops.router,
+    prefix="/api/v1",
+)
+
+
+@app.get("/")
+def root():
+
+    return {
+        "name": settings.app_name,
+        "status": "running",
+    }
+
+15. Knowledge file
+Create:
+
+backend/data/documents/rice.txt
+
+Example:
+
+Rice is an important cereal crop.
+
+Rice water management depends on soil,
+climate, crop stage and local production
+conditions.
+
+Farmers should consider rainfall,
+soil moisture and crop growth stage
+when determining irrigation requirements.
+
+For specific local recommendations,
+farmers should consult local agricultural
+extension services and applicable
+agricultural guidance.
+
+You can later replace this basic text retrieval with FAO documents + embeddings + pgvector.
+
+16. Docker
+docker-compose.yml
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: aifao-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aifao
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    container_name: aifao-backend
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
+
+17. Dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir \
+    -r requirements.txt
+
+COPY . .
+
+CMD [
+    "uvicorn",
+    "app.main:app",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8000",
+    "--reload"
+]
+
+18. Run the backend
+From the backend directory:
+
+docker compose up --build
+
+Or without Docker:
+
+pip install -r requirements.txt
+
+uvicorn app.main:app --reload
+
+Then open:
+
+http://localhost:8000/docs
+
+You will get the FastAPI Swagger API interface.
+
+Test health
+curl http://localhost:8000/api/v1/health
+
+Expected:
+
+{
+  "status": "healthy",
+  "service": "AI-FAO-Assistant"
+}
+
+Test chat
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "farmer_id": 1,
+    "message": "How should I manage water for my rice crop?",
+    "language": "en"
+  }'
+
+Production architecture
+Once the MVP works, I would evolve it to:
+
+                         Mobile / Web / WhatsApp
+                                  │
+                                  ▼
+                            API Gateway
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │                           │
+                Auth Service              Rate Limiter
+                    │
+                    ▼
+              AI Orchestrator
+                    │
+       ┌────────────┼──────────────┐
+       ▼            ▼              ▼
+    LLM/RAG    Vision Agent    Tool Agent
+       │            │              │
+       │            │       ┌──────┼───────┐
+       │            │       ▼      ▼       ▼
+       │            │   Weather  Market   GIS
+       │            │
+       ▼            ▼
+ PostgreSQL       Object Storage
+ + pgvector       Images/Documents
+       │
+       ▼
+ Agricultural Knowledge Base
+       │
+       ├── FAO documents
+       ├── Crop knowledge
+       ├── Pest/disease knowledge
+       ├── Agricultural statistics
+       ├── Weather data
+       └── Local agricultural information
