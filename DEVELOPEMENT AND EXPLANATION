@@ -1,0 +1,1358 @@
+Development and Technical Explanation
+1. Project Overview
+AI-FAO-Assistant is an AI-powered agricultural assistant designed to provide farmers and agricultural users with useful information about:
+
+Crops
+
+Crop management
+
+Irrigation
+
+Soil management
+
+Pests and diseases
+
+Agricultural practices
+
+Weather information
+
+Agricultural knowledge
+
+FAO-related documents and resources
+
+Farmer-specific information
+
+The system combines a Large Language Model (LLM), Retrieval-Augmented Generation (RAG), agricultural knowledge, databases, and external APIs.
+
+2. Main Objectives
+The main objectives are:
+
+Provide agriculture-related answers using natural language.
+
+Retrieve reliable agricultural information before generating answers.
+
+Maintain farmer and farm information.
+
+Support multiple languages.
+
+Support future crop and disease image analysis.
+
+Integrate weather and agricultural data.
+
+Provide source information for knowledge-based answers.
+
+Protect user data.
+
+Create an architecture that can scale from an MVP to a production system.
+
+3. System Architecture
+                    AI-FAO-Assistant
+                           |
+          +----------------+----------------+
+          |                                 |
+      Web / Mobile                     WhatsApp
+          |                                 |
+          +---------------+-----------------+
+                          |
+                    API Gateway
+                          |
+                    FastAPI Backend
+                          |
+              +-----------+-----------+
+              |                       |
+        AI Orchestrator          User Services
+              |                       |
+       +------+-------+          +----+----+
+       |      |       |          |         |
+      LLM    RAG    Tools     Farmers    Crops
+       |      |       |
+       |      |       +-------- Weather
+       |      |                Market
+       |      |                GIS
+       |      |
+       |   Vector Database
+       |      |
+       |   FAO Knowledge
+       |      |
+       +------+ 
+              |
+          PostgreSQL
+
+4. Recommended Technology Stack
+Backend
+Python + FastAPI
+
+FastAPI is responsible for:
+
+REST APIs
+
+Request validation
+
+Authentication integration
+
+API documentation
+
+Communication with AI services
+
+Communication with databases
+
+Database
+PostgreSQL
+
+Used for:
+
+Farmers
+
+Farms
+
+Crops
+
+Conversations
+
+Messages
+
+Agricultural records
+
+Vector Database
+PostgreSQL + pgvector
+
+Used for:
+
+FAO documents
+
+Agricultural documents
+
+Semantic search
+
+RAG
+
+AI
+LLM API
+
+Used for:
+
+Natural-language understanding
+
+Answer generation
+
+Agricultural explanations
+
+Multilingual responses
+
+Storage
+Object storage can be used for:
+
+Crop images
+
+Disease images
+
+PDF documents
+
+Agricultural datasets
+
+5. Backend Project Structure
+AI-FAO-Assistant/
+│
+├── backend/
+│   │
+│   ├── app/
+│   │   ├── main.py
+│   │   │
+│   │   ├── api/
+│   │   │   └── routes/
+│   │   │       ├── chat.py
+│   │   │       ├── farmers.py
+│   │   │       ├── crops.py
+│   │   │       ├── weather.py
+│   │   │       └── health.py
+│   │   │
+│   │   ├── ai/
+│   │   │   ├── orchestrator.py
+│   │   │   ├── llm.py
+│   │   │   ├── rag.py
+│   │   │   ├── embeddings.py
+│   │   │   └── prompts.py
+│   │   │
+│   │   ├── services/
+│   │   │   ├── farmer_service.py
+│   │   │   ├── crop_service.py
+│   │   │   ├── weather_service.py
+│   │   │   └── notification_service.py
+│   │   │
+│   │   ├── db/
+│   │   │   ├── database.py
+│   │   │   └── models.py
+│   │   │
+│   │   ├── schemas/
+│   │   │   ├── farmer.py
+│   │   │   ├── crop.py
+│   │   │   └── chat.py
+│   │   │
+│   │   └── core/
+│   │       ├── config.py
+│   │       └── security.py
+│   │
+│   ├── data/
+│   │   ├── documents/
+│   │   └── processed/
+│   │
+│   ├── tests/
+│   │
+│   ├── .env
+│   ├── .env.example
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── docker-compose.yml
+│
+├── frontend/
+│
+├── README.md
+├── DEVELOPMENT.md
+└── .gitignore
+
+6. Development Phases
+Phase 1 — Project Setup
+Create the backend project.
+
+mkdir AI-FAO-Assistant
+cd AI-FAO-Assistant
+
+mkdir backend
+cd backend
+
+python -m venv venv
+
+Activate the environment.
+
+Windows
+venv\Scripts\activate
+
+Linux/macOS
+source venv/bin/activate
+
+Install packages:
+
+pip install fastapi uvicorn sqlalchemy psycopg2-binary
+pip install pydantic pydantic-settings python-dotenv
+pip install openai pgvector httpx
+
+Save dependencies:
+
+pip freeze > requirements.txt
+
+7. FastAPI Application
+Create:
+
+app/main.py
+
+Code:
+
+from fastapi import FastAPI
+
+app = FastAPI(
+    title="AI-FAO-Assistant",
+    version="1.0.0",
+    description="AI-powered agricultural assistant"
+)
+
+
+@app.get("/")
+def root():
+    return {
+        "application": "AI-FAO-Assistant",
+        "status": "running"
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy"
+    }
+
+Run:
+
+uvicorn app.main:app --reload
+
+Open:
+
+http://localhost:8000
+
+API documentation:
+
+http://localhost:8000/docs
+
+8. Configuration
+Create:
+
+app/core/config.py
+
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+
+    app_name: str = "AI-FAO-Assistant"
+
+    database_url: str
+
+    openai_api_key: str
+
+    openai_model: str = "gpt-4o-mini"
+
+    class Config:
+        env_file = ".env"
+
+
+settings = Settings()
+
+Create .env:
+
+APP_NAME=AI-FAO-Assistant
+
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/aifao
+
+OPENAI_API_KEY=YOUR_API_KEY
+
+OPENAI_MODEL=gpt-4o-mini
+
+Never commit .env to Git.
+
+9. Database Development
+Create:
+
+app/db/database.py
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+from app.core.config import settings
+
+
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+Base = declarative_base()
+
+
+def get_db():
+
+    db = SessionLocal()
+
+    try:
+        yield db
+
+    finally:
+        db.close()
+
+10. Farmer Database Model
+Create:
+
+app/db/models.py
+
+from datetime import datetime
+
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime
+)
+
+from app.db.database import Base
+
+
+class Farmer(Base):
+
+    __tablename__ = "farmers"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    name = Column(
+        String(150),
+        nullable=False
+    )
+
+    phone = Column(
+        String(30),
+        unique=True
+    )
+
+    language = Column(
+        String(20),
+        default="en"
+    )
+
+    latitude = Column(
+        Float
+    )
+
+    longitude = Column(
+        Float
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+11. Crop Model
+class Crop(Base):
+
+    __tablename__ = "crops"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    farmer_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    name = Column(
+        String(100),
+        nullable=False
+    )
+
+    variety = Column(
+        String(100)
+    )
+
+    planting_date = Column(
+        String(50)
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+12. Conversation Model
+class Conversation(Base):
+
+    __tablename__ = "conversations"
+
+    id = Column(
+        Integer,
+        primary_key=True
+    )
+
+    farmer_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+13. Message Model
+class Message(Base):
+
+    __tablename__ = "messages"
+
+    id = Column(
+        Integer,
+        primary_key=True
+    )
+
+    conversation_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    role = Column(
+        String(30),
+        nullable=False
+    )
+
+    content = Column(
+        String,
+        nullable=False
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+14. Creating Database Tables
+In main.py:
+
+from app.db.database import Base, engine
+
+from app.db import models
+
+
+Base.metadata.create_all(
+    bind=engine
+)
+
+For a production application, database migrations should be handled with Alembic rather than creating tables automatically.
+
+15. AI Service
+Create:
+
+app/ai/llm.py
+
+from openai import OpenAI
+
+from app.core.config import settings
+
+
+client = OpenAI(
+    api_key=settings.openai_api_key
+)
+
+
+SYSTEM_PROMPT = """
+You are AI-FAO-Assistant.
+
+You provide agricultural information.
+
+You can help users understand:
+
+- crops
+- irrigation
+- soil management
+- pests
+- plant diseases
+- crop management
+- agricultural practices
+- weather-related agricultural questions
+
+Use the supplied knowledge context when available.
+
+Do not invent sources or facts.
+
+If information is uncertain, clearly say so.
+
+For potentially harmful agricultural chemical,
+pesticide, veterinary, food-safety or serious
+disease decisions, recommend consulting an
+appropriate qualified agricultural professional.
+
+Answer in the user's requested language.
+"""
+
+
+def ask_ai(
+    question: str,
+    context: str = "",
+    language: str = "en"
+):
+
+    user_prompt = f"""
+Language:
+{language}
+
+Agricultural context:
+{context}
+
+Question:
+{question}
+"""
+
+    response = client.chat.completions.create(
+
+        model=settings.openai_model,
+
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": user_prompt
+            }
+        ]
+    )
+
+    return response.choices[0].message.content
+
+16. RAG Development
+RAG means:
+
+Retrieval-Augmented Generation
+
+Instead of asking the LLM to answer only from its model knowledge:
+
+Question
+   |
+   v
+LLM
+   |
+   v
+Answer
+
+we use:
+
+Question
+   |
+   v
+Knowledge Search
+   |
+   v
+Relevant Documents
+   |
+   v
+LLM
+   |
+   v
+Answer
+
+This is important for an agricultural assistant because the system can provide answers based on a controlled knowledge collection.
+
+17. RAG Pipeline
+FAO / Agriculture Documents
+             |
+             v
+       Document Loader
+             |
+             v
+          Cleaning
+             |
+             v
+          Chunking
+             |
+             v
+         Embeddings
+             |
+             v
+       Vector Database
+             |
+             |
+User Question
+             |
+             v
+       Query Embedding
+             |
+             v
+       Similarity Search
+             |
+             v
+      Relevant Chunks
+             |
+             v
+            LLM
+             |
+             v
+       Final Response
+
+18. Basic RAG Service
+Create:
+
+app/ai/rag.py
+
+from pathlib import Path
+
+
+DOCUMENT_PATH = Path(
+    "data/documents"
+)
+
+
+def load_documents():
+
+    documents = []
+
+    if not DOCUMENT_PATH.exists():
+        return documents
+
+    for file in DOCUMENT_PATH.glob("*.txt"):
+
+        text = file.read_text(
+            encoding="utf-8"
+        )
+
+        documents.append({
+            "filename": file.name,
+            "content": text
+        })
+
+    return documents
+
+
+def retrieve_documents(
+    question: str
+):
+
+    documents = load_documents()
+
+    question_words = set(
+        question.lower().split()
+    )
+
+    results = []
+
+    for document in documents:
+
+        words = set(
+            document["content"]
+            .lower()
+            .split()
+        )
+
+        score = len(
+            question_words.intersection(words)
+        )
+
+        if score > 0:
+
+            results.append({
+                "score": score,
+                "filename": document["filename"],
+                "content": document["content"]
+            })
+
+    results.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    return results[:3]
+
+This is only an MVP implementation.
+
+The production version should use embeddings and pgvector.
+
+19. Chat API
+Create:
+
+app/api/routes/chat.py
+
+from fastapi import APIRouter
+
+from pydantic import BaseModel
+
+from app.ai.llm import ask_ai
+from app.ai.rag import retrieve_documents
+
+
+router = APIRouter(
+    prefix="/chat",
+    tags=["Chat"]
+)
+
+
+class ChatRequest(BaseModel):
+
+    question: str
+
+    language: str = "en"
+
+
+@router.post("")
+def chat(
+    request: ChatRequest
+):
+
+    documents = retrieve_documents(
+        request.question
+    )
+
+    context = "\n\n".join(
+        document["content"]
+        for document in documents
+    )
+
+    answer = ask_ai(
+        question=request.question,
+        context=context,
+        language=request.language
+    )
+
+    return {
+        "answer": answer,
+        "sources": [
+            document["filename"]
+            for document in documents
+        ]
+    }
+
+20. Register Chat API
+In main.py:
+
+from app.api.routes import chat
+
+app.include_router(
+    chat.router,
+    prefix="/api/v1"
+)
+
+The endpoint becomes:
+
+POST /api/v1/chat
+
+21. Example Request
+{
+    "question": "How should I manage irrigation for rice?",
+    "language": "en"
+}
+
+Example response:
+
+{
+    "answer": "Irrigation requirements for rice depend on...",
+    "sources": [
+        "rice.txt"
+    ]
+}
+
+22. AI Orchestrator
+As the application grows, the chat endpoint should not directly control every AI component.
+
+Create:
+
+app/ai/orchestrator.py
+
+from app.ai.llm import ask_ai
+from app.ai.rag import retrieve_documents
+
+
+def process_question(
+    question: str,
+    language: str = "en"
+):
+
+    documents = retrieve_documents(
+        question
+    )
+
+    context = "\n\n".join(
+        document["content"]
+        for document in documents
+    )
+
+    answer = ask_ai(
+        question=question,
+        context=context,
+        language=language
+    )
+
+    return {
+        "answer": answer,
+        "sources": [
+            document["filename"]
+            for document in documents
+        ]
+    }
+
+Now the API calls the orchestrator:
+
+from app.ai.orchestrator import process_question
+
+
+result = process_question(
+    question=request.question,
+    language=request.language
+)
+
+return result
+
+23. Why Use an Orchestrator?
+The orchestrator becomes the central AI decision layer.
+
+For example:
+
+User Question
+      |
+      v
+Intent Detection
+      |
+      +---- Crop Question ------> Crop Knowledge
+      |
+      +---- Weather Question ---> Weather API
+      |
+      +---- Market Question ----> Market API
+      |
+      +---- Disease Question ---> Disease Model
+      |
+      +---- General Question ---> RAG
+      |
+      v
+      LLM
+      |
+      v
+Validated Answer
+
+This prevents the LLM from being responsible for every operation.
+
+24. Weather Integration
+Create:
+
+app/services/weather_service.py
+
+Example:
+
+import httpx
+
+
+async def get_weather(
+    latitude: float,
+    longitude: float
+):
+
+    url = "WEATHER_API_URL"
+
+    params = {
+        "latitude": latitude,
+        "longitude": longitude
+    }
+
+    async with httpx.AsyncClient() as client:
+
+        response = await client.get(
+            url,
+            params=params
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+The actual weather provider can be added later.
+
+25. Crop Disease Image Analysis
+Future endpoint:
+
+POST /api/v1/disease/analyze
+
+Flow:
+
+Farmer
+  |
+  v
+Upload Crop Image
+  |
+  v
+Image Storage
+  |
+  v
+Vision Model
+  |
+  v
+Possible Disease
+  |
+  v
+Agricultural Knowledge Retrieval
+  |
+  v
+LLM
+  |
+  v
+Explanation
+
+Example response:
+
+{
+    "crop": "tomato",
+    "possible_issue": "leaf disease",
+    "confidence": 0.82,
+    "advice": "...",
+    "warning": "Image-based identification is not a substitute for professional diagnosis."
+}
+
+The system should avoid presenting an uncertain image classification as a confirmed diagnosis.
+
+26. Multilingual Architecture
+The assistant should support:
+
+English
+Tamil
+Hindi
+Telugu
+Kannada
+Malayalam
+Bengali
+Marathi
+etc.
+
+The request contains:
+
+{
+    "question": "நெல் பயிருக்கு எவ்வளவு தண்ணீர் தேவை?",
+    "language": "ta"
+}
+
+The AI service receives:
+
+Language: ta
+
+and generates the response in the requested language.
+
+For production, language detection and translation should be separate services or controlled model operations rather than relying only on the user-provided language field.
+
+27. Farmer Context
+The assistant becomes more useful when it knows the farmer's agricultural context.
+
+Example:
+
+Farmer
+ |
+ +-- Location
+ |
+ +-- Farm size
+ |
+ +-- Soil
+ |
+ +-- Crops
+ |
+ +-- Crop variety
+ |
+ +-- Planting date
+ |
+ +-- Previous observations
+ |
+ +-- Weather
+ |
+ +-- Conversation history
+
+Example question:
+
+"What should I do today?"
+
+The backend can combine:
+
+Farmer profile
++
+Current crop
++
+Crop age
++
+Weather
++
+Agricultural knowledge
++
+Conversation history
+
+before asking the AI to generate the response.
+
+28. API Structure
+Recommended API endpoints:
+
+/api/v1/health
+
+/api/v1/auth/login
+/api/v1/auth/register
+
+/api/v1/farmers
+/api/v1/farmers/{id}
+
+/api/v1/farms
+/api/v1/farms/{id}
+
+/api/v1/crops
+/api/v1/crops/{id}
+
+/api/v1/chat
+
+/api/v1/weather
+
+/api/v1/disease/analyze
+
+/api/v1/pests
+
+/api/v1/markets
+
+/api/v1/documents
+
+29. Security
+Security should be implemented before production deployment.
+
+Important controls:
+
+Authentication
+      |
+      v
+Authorization
+      |
+      v
+Input Validation
+      |
+      v
+Rate Limiting
+      |
+      v
+Prompt Injection Protection
+      |
+      v
+Data Protection
+      |
+      v
+Audit Logging
+
+Never expose:
+
+OPENAI_API_KEY
+DATABASE_PASSWORD
+JWT_SECRET
+
+to the frontend.
+
+They must remain on the backend.
+
+30. Environment Variables
+.env
+
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/aifao
+
+OPENAI_API_KEY=YOUR_API_KEY
+
+OPENAI_MODEL=gpt-4o-mini
+
+JWT_SECRET=CHANGE_THIS_VALUE
+
+WEATHER_API_KEY=YOUR_WEATHER_KEY
+
+.gitignore
+
+.env
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+31. Testing
+Install:
+
+pip install pytest
+
+Create:
+
+tests/test_health.py
+
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
+client = TestClient(app)
+
+
+def test_health():
+
+    response = client.get(
+        "/health"
+    )
+
+    assert response.status_code == 200
+
+    assert response.json()["status"] == "healthy"
+
+Run:
+
+pytest
+
+32. Development Workflow
+The recommended development cycle is:
+
+Requirement
+    |
+    v
+Design
+    |
+    v
+Implement
+    |
+    v
+Unit Test
+    |
+    v
+API Test
+    |
+    v
+Integration Test
+    |
+    v
+Security Test
+    |
+    v
+Deploy
+    |
+    v
+Monitor
+
+33. MVP Development Order
+Do not build every feature simultaneously.
+
+Recommended order:
+
+Step 1
+Build FastAPI.
+
+Step 2
+Build PostgreSQL database.
+
+Step 3
+Create farmer and crop APIs.
+
+Step 4
+Add LLM integration.
+
+Step 5
+Add RAG.
+
+Step 6
+Add conversation history.
+
+Step 7
+Add multilingual support.
+
+Step 8
+Add weather integration.
+
+Step 9
+Add crop/disease image analysis.
+
+Step 10
+Add market information.
+
+Step 11
+Add authentication.
+
+Step 12
+Deploy.
+
+34. Production Architecture
+The final architecture can become:
+
+                     FRONTEND
+                         |
+             +-----------+-----------+
+             |                       |
+          Mobile                    Web
+             |                       |
+             +-----------+-----------+
+                         |
+                    API Gateway
+                         |
+                    Load Balancer
+                         |
+                 FastAPI Application
+                         |
+              +----------+----------+
+              |                     |
+        AI Orchestrator       Application APIs
+              |                     |
+       +------+------+        +-----+------+
+       |      |      |        |            |
+      LLM    RAG   Agents   Farmer       Crop
+       |      |      |        |            |
+       |      |      |        +-----+------+
+       |      |      |              |
+       |      |      |         PostgreSQL
+       |      |      |
+       |      |   External APIs
+       |      |
+       |   pgvector
+       |      |
+       |   Knowledge Base
+       |
+    AI Services
+
+35. Final Development Goal
+The completed AI-FAO-Assistant should work approximately as follows:
+
+Farmer asks question
+        |
+        v
+Authentication
+        |
+        v
+Identify farmer
+        |
+        v
+Identify intent
+        |
+        v
+Collect farmer context
+        |
+        +------ Weather
+        |
+        +------ Crop information
+        |
+        +------ Location
+        |
+        +------ Agricultural knowledge
+        |
+        +------ Previous conversation
+        |
+        v
+Retrieve relevant documents
+        |
+        v
+LLM / AI processing
+        |
+        v
+Safety and response validation
+        |
+        v
+Generate answer
+        |
+        v
+Return answer + sources
+        |
+        v
+Store conversation
+
+36. Important Development Principle
+The AI model should not be treated as the agricultural database.
+
+Use:
+
+LLM
++
+RAG
++
+Structured Database
++
+External Data
++
+Validation
+
+rather than:
+
+LLM only
+
+This makes the assistant easier to update, test, monitor, and improve.
+
+37. Initial Deliverable
+The first working version should contain:
+
+[✓] FastAPI backend
+[✓] PostgreSQL
+[✓] Farmer management
+[✓] Crop management
+[✓] Chat API
+[✓] LLM integration
+[✓] Basic RAG
+[✓] Conversation storage
+[✓] API documentation
+[✓] Automated tests
+[ ] Authentication
+[ ] Production vector search
+[ ] Weather integration
+[ ] Disease image analysis
+[ ] Market integration
+[ ] Multilingual voice
+[ ] Mobile application
